@@ -365,4 +365,56 @@ def main():
     st.markdown(f"### 📊 Planilha Mensal: {titulo_mes}")
     
     # Busca os dados do mês atual e organiza por data
-    mes_formatado = f"{st.session_state.mes_ref.year}-{st.session_state.mes_ref.month:
+    mes_formatado = f"{st.session_state.mes_ref.year}-{st.session_state.mes_ref.month:02d}"
+    df_mes_relatorio = conn.query(f"SELECT data as Data, turno as Turno, paciente as Paciente, empresa as Empresa, observacao as Observação, responsavel as Responsável FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
+    
+    if df_mes_relatorio.empty:
+        st.info("Nenhum agendamento encontrado para este mês.")
+    else:
+        # Formata a data para padrão brasileiro
+        df_mes_relatorio['Data'] = pd.to_datetime(df_mes_relatorio['Data']).dt.strftime('%d/%m/%Y')
+        
+        # Exibe a tabela na tela
+        st.dataframe(df_mes_relatorio, use_container_width=True, hide_index=True)
+        
+        col_down, col_print = st.columns([1, 1])
+        
+        # Botão para baixar Excel/CSV
+        with col_down:
+            csv_data = df_mes_relatorio.to_csv(index=False, sep=';').encode('utf-8-sig')
+            st.download_button(
+                label="📥 Baixar Planilha (Excel/CSV)",
+                data=csv_data,
+                file_name=f"Agendamentos_{titulo_mes.replace(' ', '_')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+        # Botão para imprimir tabela (Gera um HTML limpo em janela separada)
+        with col_print:
+            html_table = df_mes_relatorio.to_html(index=False).replace('\n', '')
+            js_print_code = f"""
+            <button onclick="printTable()" style="width: 100%; border: 1px solid #2E7D32; background: white; color: #2E7D32; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; font-family: sans-serif; transition: 0.3s; box-shadow: 0 2px 5px rgba(0,0,0,0.05);" onmouseover="this.style.background='#2E7D32'; this.style.color='white'" onmouseout="this.style.background='white'; this.style.color='#2E7D32'">
+                🖨️ IMPRIMIR PLANILHA DO MÊS
+            </button>
+            <script>
+            function printTable() {{
+                var printWin = window.open('', '', 'height=800,width=1000');
+                printWin.document.write('<html><head><title>Impressão - {titulo_mes}</title>');
+                printWin.document.write('<style>body {{ font-family: sans-serif; }} table {{width:100%; border-collapse: collapse; margin-top: 20px;}} th, td {{border: 1px solid #444; padding: 10px; text-align: left;}} th {{background-color: #f2f2f2;}} h2 {{ color: #1B5E20; text-align: center; }}</style>');
+                printWin.document.write('</head><body>');
+                printWin.document.write('<h2>Agendamentos - {titulo_mes}</h2>');
+                printWin.document.write('{html_table}');
+                printWin.document.write('</body></html>');
+                printWin.document.close();
+                setTimeout(function() {{
+                    printWin.print();
+                    printWin.close();
+                }}, 300);
+            }}
+            </script>
+            """
+            components.html(js_print_code, height=50)
+
+if __name__ == "__main__":
+    main()

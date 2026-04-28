@@ -8,7 +8,7 @@ from sqlalchemy import text
 # Configuração da Página
 st.set_page_config(page_title="AME | Gestão de EEG", layout="wide")
 
-# CSS Estilizado (Com correção visual para o dia selecionado)
+# CSS Estilizado
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -24,26 +24,16 @@ st.markdown("""
         font-size: 12px; text-transform: uppercase; color: #666;
         text-align: center; margin-bottom: 30px; font-weight: 600;
     }
-    
-    /* Botões Normais do Calendário */
     .stButton>button {
         border: none; background-color: #ffffff; color: #2E7D32;
         border-radius: 12px !important; height: 90px !important;
         font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
     .stButton>button:hover { transform: translateY(-3px); border: 1px solid #4CAF50; }
-    
-    /* MÁGICA AQUI: Dia Selecionado fica Verde */
-    button[kind="primary"] {
+    div[data-testid="stColumn"] button[aria-label*="selected"] {
         background: linear-gradient(135deg, #2E7D32 0%, #1B5E20 100%) !important;
         color: white !important;
-        box-shadow: 0 8px 15px rgba(27, 94, 32, 0.3) !important;
-        border: none !important;
     }
-    button[kind="primary"] * {
-        color: white !important;
-    }
-
     .feriado-box {
         background: #ffebee; color: #c62828; border-radius: 12px; height: 90px;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -159,16 +149,11 @@ def main():
         for i, dia in enumerate(semana):
             if dia.month == st.session_state.mes_ref.month:
                 with cols[i]:
-                    if dia in dict_bloqueios: 
-                        st.markdown(f"<div class='feriado-box'>{dia.day}<br><small>{dict_bloqueios[dia][:10]}</small></div>", unsafe_allow_html=True)
+                    if dia in dict_bloqueios: st.markdown(f"<div class='feriado-box'>{dia.day}<br><small>{dict_bloqueios[dia][:10]}</small></div>", unsafe_allow_html=True)
                     else:
                         m = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Manhã')]) if not df_ag_mes.empty else 0
                         t = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Tarde')]) if not df_ag_mes.empty else 0
-                        
-                        # Define se o botão está selecionado ou não para dar o destaque verde
-                        btn_type = "primary" if dia == st.session_state.data_sel else "secondary"
-                        
-                        if st.button(f"{dia.day}\nM:{m}/{obter_limite(dia,'Manhã')}\nT:{t}/{obter_limite(dia,'Tarde')}", key=f"d_{dia}", type=btn_type, use_container_width=True):
+                        if st.button(f"{dia.day}\nM:{m}/{obter_limite(dia,'Manhã')}\nT:{t}/{obter_limite(dia,'Tarde')}", key=f"d_{dia}", use_container_width=True):
                             st.session_state.data_sel = dia; st.rerun()
 
     # Atendimento do Dia

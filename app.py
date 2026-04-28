@@ -8,7 +8,7 @@ from sqlalchemy import text
 # Configuração da Página
 st.set_page_config(page_title="AME | Gestão de EEG", layout="wide")
 
-# CSS
+# CSS Estilizado
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -51,8 +51,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Conexão Nuvem
-conn = st.connection("postgresql", type="sql")
+# Tenta conectar ao banco de dados
+try:
+    conn = st.connection("postgresql", type="sql")
+except Exception as e:
+    st.error("Erro crítico de conexão. Verifique os Secrets no Streamlit Cloud.")
+    st.stop()
 
 def inicializar_banco():
     with conn.session as s:
@@ -66,21 +70,27 @@ def main():
     if 'data_sel' not in st.session_state: st.session_state.data_sel = date.today()
     if 'mes_ref' not in st.session_state: st.session_state.mes_ref = date.today().replace(day=1)
 
+    # Carregar dados com tratamento para evitar erros de cache
     df_bloqueios = conn.query("SELECT data, motivo FROM datas_bloqueadas", ttl=0)
     dict_bloqueios = {row['data']: row['motivo'] for _, row in df_bloqueios.iterrows()}
+    
     df_limites = conn.query("SELECT data, turno, limite FROM limites_vagas", ttl=0)
     dict_limites = {(row['data'], row['turno']): row['limite'] for _, row in df_limites.iterrows()}
+    
     def obter_limite(d, t): return dict_limites.get((d, t), 6 if t == "Manhã" else 10)
 
+    # Sidebar
     with st.sidebar:
         st.markdown('<div class="logo-ame">AME</div>', unsafe_allow_html=True)
         st.markdown('<div class="sub-logo">Assistência Médica Especializada</div>', unsafe_allow_html=True)
+        
         st.markdown("### 🏥 Novo Agendamento")
         dt_cad = st.date_input("Data", value=st.session_state.data_sel)
         periodo = st.radio("Turno", ["Manhã", "Tarde"], horizontal=True)
         limite = obter_limite(dt_cad, periodo)
+        
         res_ocup = conn.query("SELECT COUNT(*) as total FROM agendamentos WHERE data=:d AND turno=:t", params={"d": dt_cad, "t": periodo}, ttl=0)
-        ocupadas = res_ocup['total'][0]
+        ocupadas = res_ocup['total'][0] if not res_ocup.empty else 0
         
         if dt_cad in dict_bloqueios:
             st.error(f"🔒 BLOQUEADO: {dict_bloqueios[dt_cad]}")
@@ -120,6 +130,7 @@ def main():
                     s.commit()
                 st.rerun()
 
+    # Calendário
     c1, c2, c3 = st.columns([1,2,1])
     with c1: 
         if st.button("⬅️ Anterior"): st.session_state.mes_ref = (st.session_state.mes_ref - timedelta(days=1)).replace(day=1); st.rerun()
@@ -140,11 +151,12 @@ def main():
                 with cols[i]:
                     if dia in dict_bloqueios: st.markdown(f"<div class='feriado-box'>{dia.day}<br><small>{dict_bloqueios[dia][:10]}</small></div>", unsafe_allow_html=True)
                     else:
-                        m = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Manhã')])
-                        t = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Tarde')])
+                        m = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Manhã')]) if not df_ag_mes.empty else 0
+                        t = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Tarde')]) if not df_ag_mes.empty else 0
                         if st.button(f"{dia.day}\nM:{m}/{obter_limite(dia,'Manhã')}\nT:{t}/{obter_limite(dia,'Tarde')}", key=f"d_{dia}", use_container_width=True):
                             st.session_state.data_sel = dia; st.rerun()
 
+    # Atendimento do Dia
     st.markdown("---")
     c_t, c_p = st.columns([4,1])
     c_t.markdown(f"### 📋 Atendimento: {st.session_state.data_sel.strftime('%d/%m/%Y')}")
@@ -155,21 +167,14 @@ def main():
     for i, turno in enumerate(["Manhã", "Tarde"]):
         with [col1, col2][i]:
             st.markdown(f"#### {turno}")
-            dados = df_dia[df_dia['turno'] == turno]
+            dados = df_dia[df_dia['turno'] == turno] if not df_dia.empty else pd.DataFrame()
             if dados.empty: st.info("Vazio")
-            for _, r in dados.iterrows():
-                st.markdown(f'<div class="paciente-card"><b>{r["paciente"]}</b><br>{r["empresa"]}<br><small>{r["observacao"]}</small></div>', unsafe_allow_html=True)
-                if st.button("Remover", key=f"del_{r['id']}"):
-                    with conn.session as s: s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]}); s.commit()
-                    st.rerun()
-
-    st.markdown("---")
-    st.markdown("### 📊 Relatório Mensal")
-    mes_str = st.session_state.mes_ref.strftime("%Y-%m")
-    df_rel = conn.query(f"SELECT data, turno, paciente, empresa, responsavel FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_str}%' ORDER BY data ASC", ttl=0)
-    if not df_rel.empty:
-        st.dataframe(df_rel, use_container_width=True)
-        st.download_button("📥 Baixar CSV", df_rel.to_csv(index=False).encode('utf-8'), f"Agenda_{mes_str}.csv", "text/csv")
+            else:
+                for _, r in dados.iterrows():
+                    st.markdown(f'<div class="paciente-card"><b>{r["paciente"]}</b><br>{r["empresa"]}<br><small>{r["observacao"]}</small></div>', unsafe_allow_html=True)
+                    if st.button("Remover", key=f"del_{r['id']}"):
+                        with conn.session as s: s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]}); s.commit()
+                        st.rerun()
 
 if __name__ == "__main__":
     main()

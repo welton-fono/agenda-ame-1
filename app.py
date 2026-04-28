@@ -364,13 +364,23 @@ def main():
     st.markdown("---")
     st.markdown(f"### 📊 Planilha Mensal: {titulo_mes}")
     
-    # Busca os dados do mês atual e organiza por data
+    # Busca os dados do mês atual (PostgreSQL retorna colunas em minúsculo)
     mes_formatado = f"{st.session_state.mes_ref.year}-{st.session_state.mes_ref.month:02d}"
-    df_mes_relatorio = conn.query(f"SELECT data as Data, turno as Turno, paciente as Paciente, empresa as Empresa, observacao as Observação, responsavel as Responsável FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
+    df_mes_relatorio = conn.query(f"SELECT data, turno, paciente, empresa, observacao, responsavel FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
     
     if df_mes_relatorio.empty:
         st.info("Nenhum agendamento encontrado para este mês.")
     else:
+        # Renomeia as colunas para ficarem elegantes na tabela
+        df_mes_relatorio = df_mes_relatorio.rename(columns={
+            'data': 'Data',
+            'turno': 'Turno',
+            'paciente': 'Paciente',
+            'empresa': 'Empresa',
+            'observacao': 'Observação',
+            'responsavel': 'Responsável'
+        })
+
         # Formata a data para padrão brasileiro
         df_mes_relatorio['Data'] = pd.to_datetime(df_mes_relatorio['Data']).dt.strftime('%d/%m/%Y')
         

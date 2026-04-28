@@ -196,6 +196,7 @@ def main():
                     
                     if st.form_submit_button("FINALIZAR AGENDAMENTO"):
                         if nome and emp and resp:
+                            # Aqui pegamos o exato momento em que o agendamento foi salvo
                             agora = datetime.now().strftime("%d/%m/%Y %H:%M")
                             with conn.session as s:
                                 s.execute(text("INSERT INTO agendamentos (data, turno, paciente, empresa, observacao, responsavel, registro) VALUES (:d,:t,:p,:e,:o,:r,:reg)"),
@@ -267,7 +268,7 @@ def main():
     cal = calendar.Calendar(firstweekday=6)
     dias_do_mes = cal.monthdatescalendar(st.session_state.mes_ref.year, st.session_state.mes_ref.month)
     
-    # Puxa os agendamentos apenas do mês atual para o calendário (mais rápido)
+    # Puxa os agendamentos apenas do mês atual para o calendário
     df_mes = conn.query("SELECT data, turno FROM agendamentos WHERE data >= :ini AND data <= :fim", 
                         params={"ini":st.session_state.mes_ref, "fim":st.session_state.mes_ref + timedelta(days=31)}, ttl=0)
 
@@ -323,12 +324,13 @@ def main():
         else:
             for _, r in lista_m.iterrows():
                 with st.container():
+                    # === EXIBIÇÃO DA DATA/HORA ADICIONADA AQUI ===
                     st.markdown(f"""
                     <div class="paciente-card">
                         <b>👤 PACIENTE:</b> {r['paciente']}<br>
                         <b>🏢 EMPRESA:</b> {r['empresa']}<br>
                         <b>📝 OBS:</b> {r['observacao'] if r['observacao'] else '-'}<br>
-                        <small>✍️ Por: {r['responsavel']}</small>
+                        <small>✍️ Por: {r['responsavel']} | 🕒 Agendado em: {r['registro']}</small>
                     </div>
                     """, unsafe_allow_html=True)
                     if st.button("Remover", key=f"del_{r['id']}"):
@@ -344,12 +346,13 @@ def main():
         else:
             for _, r in lista_t.iterrows():
                 with st.container():
+                    # === EXIBIÇÃO DA DATA/HORA ADICIONADA AQUI ===
                     st.markdown(f"""
                     <div class="paciente-card">
                         <b>👤 PACIENTE:</b> {r['paciente']}<br>
                         <b>🏢 EMPRESA:</b> {r['empresa']}<br>
                         <b>📝 OBS:</b> {r['observacao'] if r['observacao'] else '-'}<br>
-                        <small>✍️ Por: {r['responsavel']}</small>
+                        <small>✍️ Por: {r['responsavel']} | 🕒 Agendado em: {r['registro']}</small>
                     </div>
                     """, unsafe_allow_html=True)
                     if st.button("Remover ", key=f"del_{r['id']}"):
@@ -364,25 +367,26 @@ def main():
     st.markdown("---")
     st.markdown(f"### 📊 Planilha Mensal: {titulo_mes}")
     
-    # Busca os dados do mês atual (PostgreSQL retorna colunas em minúsculo)
+    # Busca os dados do mês atual - ADICIONADO 'registro' NA BUSCA
     mes_formatado = f"{st.session_state.mes_ref.year}-{st.session_state.mes_ref.month:02d}"
-    df_mes_relatorio = conn.query(f"SELECT data, turno, paciente, empresa, observacao, responsavel FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
+    df_mes_relatorio = conn.query(f"SELECT data, turno, paciente, empresa, observacao, responsavel, registro FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
     
     if df_mes_relatorio.empty:
         st.info("Nenhum agendamento encontrado para este mês.")
     else:
         # Renomeia as colunas para ficarem elegantes na tabela
         df_mes_relatorio = df_mes_relatorio.rename(columns={
-            'data': 'Data',
+            'data': 'Data do Exame',
             'turno': 'Turno',
             'paciente': 'Paciente',
             'empresa': 'Empresa',
             'observacao': 'Observação',
-            'responsavel': 'Responsável'
+            'responsavel': 'Responsável',
+            'registro': 'Registrado Em (Data/Hora)'
         })
 
         # Formata a data para padrão brasileiro
-        df_mes_relatorio['Data'] = pd.to_datetime(df_mes_relatorio['Data']).dt.strftime('%d/%m/%Y')
+        df_mes_relatorio['Data do Exame'] = pd.to_datetime(df_mes_relatorio['Data do Exame']).dt.strftime('%d/%m/%Y')
         
         # Exibe a tabela na tela
         st.dataframe(df_mes_relatorio, use_container_width=True, hide_index=True)

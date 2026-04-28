@@ -80,7 +80,7 @@ def main():
     if 'data_sel' not in st.session_state: st.session_state.data_sel = date.today()
     if 'mes_ref' not in st.session_state: st.session_state.mes_ref = date.today().replace(day=1)
 
-    # Carregar dados
+    # Carregar dados com tratamento para evitar erros de cache
     df_bloqueios = conn.query("SELECT data, motivo FROM datas_bloqueadas", ttl=0)
     dict_bloqueios = {row['data']: row['motivo'] for _, row in df_bloqueios.iterrows()}
     
@@ -165,12 +165,11 @@ def main():
                         m = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Manhã')]) if not df_ag_mes.empty else 0
                         t = len(df_ag_mes[(df_ag_mes['data'] == dia) & (df_ag_mes['turno'] == 'Tarde')]) if not df_ag_mes.empty else 0
                         
-                        # Define se o botão está selecionado ou não
+                        # Define se o botão está selecionado ou não para dar o destaque verde
                         btn_type = "primary" if dia == st.session_state.data_sel else "secondary"
                         
-                        if st.button(f"{dia.day}\nM: {m}/{obter_limite(dia,'Manhã')}\nT: {t}/{obter_limite(dia,'Tarde')}", key=f"d_{dia}", type=btn_type, use_container_width=True):
-                            st.session_state.data_sel = dia
-                            st.rerun()
+                        if st.button(f"{dia.day}\nM:{m}/{obter_limite(dia,'Manhã')}\nT:{t}/{obter_limite(dia,'Tarde')}", key=f"d_{dia}", type=btn_type, use_container_width=True):
+                            st.session_state.data_sel = dia; st.rerun()
 
     # Atendimento do Dia
     st.markdown("---")

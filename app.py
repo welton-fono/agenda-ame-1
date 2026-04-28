@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import calendar
 import streamlit.components.v1 as components
 from sqlalchemy import text
@@ -196,8 +196,10 @@ def main():
                     
                     if st.form_submit_button("FINALIZAR AGENDAMENTO"):
                         if nome and emp and resp:
-                            # Aqui pegamos o exato momento em que o agendamento foi salvo
-                            agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+                            # === CONFIGURAÇÃO DO HORÁRIO DE BRASÍLIA (UTC-3) ===
+                            fuso_brasilia = timezone(timedelta(hours=-3))
+                            agora = datetime.now(fuso_brasilia).strftime("%d/%m/%Y %H:%M")
+                            
                             with conn.session as s:
                                 s.execute(text("INSERT INTO agendamentos (data, turno, paciente, empresa, observacao, responsavel, registro) VALUES (:d,:t,:p,:e,:o,:r,:reg)"),
                                          {"d":dt_cad, "t":periodo, "p":nome, "e":emp, "o":obs, "r":resp, "reg":agora})
@@ -324,7 +326,6 @@ def main():
         else:
             for _, r in lista_m.iterrows():
                 with st.container():
-                    # === EXIBIÇÃO DA DATA/HORA ADICIONADA AQUI ===
                     st.markdown(f"""
                     <div class="paciente-card">
                         <b>👤 PACIENTE:</b> {r['paciente']}<br>
@@ -346,7 +347,6 @@ def main():
         else:
             for _, r in lista_t.iterrows():
                 with st.container():
-                    # === EXIBIÇÃO DA DATA/HORA ADICIONADA AQUI ===
                     st.markdown(f"""
                     <div class="paciente-card">
                         <b>👤 PACIENTE:</b> {r['paciente']}<br>
@@ -367,7 +367,7 @@ def main():
     st.markdown("---")
     st.markdown(f"### 📊 Planilha Mensal: {titulo_mes}")
     
-    # Busca os dados do mês atual - ADICIONADO 'registro' NA BUSCA
+    # Busca os dados do mês atual
     mes_formatado = f"{st.session_state.mes_ref.year}-{st.session_state.mes_ref.month:02d}"
     df_mes_relatorio = conn.query(f"SELECT data, turno, paciente, empresa, observacao, responsavel, registro FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
     

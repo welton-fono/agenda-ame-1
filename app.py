@@ -114,7 +114,8 @@ st.markdown("""
         .stHeader, 
         [data-testid="stHeader"],
         div[data-testid="stHorizontalBlock"]:has(button), 
-        div[class*="st-emotion-cache-"] > div:has(button) { 
+        div[class*="st-emotion-cache-"] > div:has(button),
+        iframe { 
             display: none !important; 
         }
         .stApp { background-color: white !important; }
@@ -303,9 +304,19 @@ def main():
     c_titulo, c_botao_print = st.columns([4, 1])
     with c_titulo:
         st.markdown(f"### 📋 Atendimento do Dia: {data_f}")
+    
     with c_botao_print:
         if st.button("🖨️ IMPRIMIR O DIA", use_container_width=True):
-            components.html("<script>window.print();</script>", height=0)
+            js_print = """
+            <script>
+            try {
+                window.parent.print();
+            } catch (e) {
+                alert("Para imprimir a tela perfeitamente, por favor pressione as teclas Ctrl + P (ou Cmd + P) no seu teclado!");
+            }
+            </script>
+            """
+            components.html(js_print, height=0, width=0)
 
     if st.session_state.data_sel in dict_bloqueios:
         st.warning(f"Agenda bloqueada. ({dict_bloqueios[st.session_state.data_sel]})")
@@ -313,7 +324,7 @@ def main():
     df_dia = conn.query("SELECT * FROM agendamentos WHERE data=:d ORDER BY turno DESC", params={"d":st.session_state.data_sel}, ttl=0)
     
     # =========================================================================
-    # LÓGICA DE ALERTA DE ATRASOS PISCANTE E NOTIFICAÇÃO NO WINDOWS
+    # LÓGICA DE ALERTA DE ATRASOS (100% SEGURA EM CSS, SEM TRAVAR O SISTEMA)
     # =========================================================================
     fuso_brasilia = timezone(timedelta(hours=-3))
     agora = datetime.now(fuso_brasilia)
@@ -325,18 +336,18 @@ def main():
             faltosos_df = df_dia[(df_dia['turno'] == 'Manhã') & (df_dia['status'] == 'Pendente')]
             
             if not faltosos_df.empty:
-                lista_nomes = ", ".join(faltosos_df['paciente'].tolist())
+                # Transforma a lista de nomes num texto separado por vírgula e garante que sejam strings
+                lista_nomes = ", ".join([str(nome) for nome in faltosos_df['paciente'].tolist() if pd.notnull(nome)])
                 
-                # HTML com CSS de Animação (Piscar) e Script de Notificação Web
                 alerta_html = f"""
                 <style>
                 @keyframes alerta-pisca-anim {{
-                    0% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); }}
+                    0% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); border-color: #ffcdd2; }}
                     50% {{ background-color: #d32f2f; color: white; transform: scale(1.02); box-shadow: 0 0 25px rgba(211,47,47,0.9); border-color: #ff0000; }}
-                    100% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); }}
+                    100% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); border-color: #ffcdd2; }}
                 }}
                 .caixa-alerta-pisca {{
-                    animation: alerta-pisca-anim 1.2s infinite;
+                    animation: alerta-pisca-anim 1.5s infinite;
                     padding: 15px;
                     border-radius: 8px;
                     border: 3px solid #b71c1c;
@@ -345,7 +356,6 @@ def main():
                     font-family: 'Inter', sans-serif;
                 }}
                 .caixa-alerta-pisca h3, .caixa-alerta-pisca p {{
-                    color: inherit; 
                     margin: 5px 0;
                 }}
                 </style>
@@ -356,23 +366,6 @@ def main():
                     <p style="font-size: 1.3rem; font-weight: 800; text-transform: uppercase;">{lista_nomes}</p>
                     <p>Lembre-se de notificar a empresa/cliente!</p>
                 </div>
-                
-                <script>
-                // Código para gerar a notificação no cantinho do Windows/Mac mesmo minimizado
-                if (Notification.permission === "granted") {{
-                    new Notification("🚨 AME - Atraso de Funcionário!", {{
-                        body: "Os seguintes funcionários não compareceram: {lista_nomes}. Verifique o sistema!"
-                    }});
-                }} else if (Notification.permission !== "denied") {{
-                    Notification.requestPermission().then(permission => {{
-                        if (permission === "granted") {{
-                            new Notification("🚨 AME - Atraso de Funcionário!", {{
-                                body: "Os seguintes funcionários não compareceram: {lista_nomes}. Verifique o sistema!"
-                            }});
-                        }}
-                    }});
-                }}
-                </script>
                 """
                 st.markdown(alerta_html, unsafe_allow_html=True)
     # =========================================================================

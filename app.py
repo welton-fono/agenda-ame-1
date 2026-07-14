@@ -114,8 +114,7 @@ st.markdown("""
         .stHeader, 
         [data-testid="stHeader"],
         div[data-testid="stHorizontalBlock"]:has(button), 
-        div[class*="st-emotion-cache-"] > div:has(button),
-        iframe { 
+        div[class*="st-emotion-cache-"] > div:has(button) { 
             display: none !important; 
         }
         .stApp { background-color: white !important; }
@@ -304,20 +303,9 @@ def main():
     c_titulo, c_botao_print = st.columns([4, 1])
     with c_titulo:
         st.markdown(f"### 📋 Atendimento do Dia: {data_f}")
-        
     with c_botao_print:
-        js_print_dia = """
-        <button onclick="window.parent.print()" style="width: 100%; border: 1px solid #2E7D32; background: white; color: #2E7D32; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif; transition: 0.3s; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-            🖨️ IMPRIMIR O DIA
-        </button>
-        <style>
-            button:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 10px rgba(46, 125, 50, 0.2);
-            }
-        </style>
-        """
-        components.html(js_print_dia, height=50)
+        if st.button("🖨️ IMPRIMIR O DIA", use_container_width=True):
+            components.html("<script>window.print();</script>", height=0)
 
     if st.session_state.data_sel in dict_bloqueios:
         st.warning(f"Agenda bloqueada. ({dict_bloqueios[st.session_state.data_sel]})")

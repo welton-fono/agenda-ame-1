@@ -10,7 +10,7 @@ from sqlalchemy import text
 # ==========================================
 st.set_page_config(page_title="AME | Gestão de EEG", layout="wide", initial_sidebar_state="expanded")
 
-# CSS PERSONALIZADO (Layout Compacto + Regras de Impressão + Dia Selecionado)
+# CSS PERSONALIZADO 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -54,7 +54,7 @@ st.markdown("""
         background-color: #ffffff;
         color: #2E7D32;
         border-radius: 8px !important;
-        min-height: 40px; /* Mantém o botão num tamanho elegante sem exagerar */
+        min-height: 40px; 
         padding: 5px 15px !important;
         font-weight: 600;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
@@ -98,12 +98,11 @@ st.markdown("""
     /* Cards de Pacientes (Agora muito mais compactos) */
     .paciente-card {
         background: white;
-        padding: 12px 15px; /* Reduzimos o enchimento interno */
+        padding: 12px 15px; 
         border-radius: 8px;
-        border-left: 5px solid #2E7D32;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        margin-bottom: 2px; /* Aproxima o botão de remover do cartão */
-        font-size: 0.9rem; /* Letra um pouquinho menor */
+        margin-bottom: 2px; 
+        font-size: 0.9rem; 
         line-height: 1.4;
     }
 
@@ -143,7 +142,12 @@ except Exception as e:
 
 def inicializar_banco():
     with conn.session as s:
-        s.execute(text("CREATE TABLE IF NOT EXISTS agendamentos (id SERIAL PRIMARY KEY, data DATE, turno TEXT, paciente TEXT, empresa TEXT, observacao TEXT, responsavel TEXT, registro TEXT)"))
+        # Tabela com campo status
+        s.execute(text("CREATE TABLE IF NOT EXISTS agendamentos (id SERIAL PRIMARY KEY, data DATE, turno TEXT, paciente TEXT, empresa TEXT, observacao TEXT, responsavel TEXT, registro TEXT, status TEXT DEFAULT 'Pendente')"))
+        
+        # Garante que a coluna status seja adicionada caso a tabela já exista sem ela
+        s.execute(text("ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Pendente'"))
+        
         s.execute(text("CREATE TABLE IF NOT EXISTS datas_bloqueadas (id SERIAL PRIMARY KEY, data DATE UNIQUE, motivo TEXT)"))
         s.execute(text("CREATE TABLE IF NOT EXISTS limites_vagas (id SERIAL PRIMARY KEY, data DATE, turno TEXT, limite INTEGER, UNIQUE(data, turno))"))
         s.commit()
@@ -204,8 +208,8 @@ def main():
                             agora = datetime.now(fuso_brasilia).strftime("%d/%m/%Y %H:%M")
                             
                             with conn.session as s:
-                                s.execute(text("INSERT INTO agendamentos (data, turno, paciente, empresa, observacao, responsavel, registro) VALUES (:d,:t,:p,:e,:o,:r,:reg)"),
-                                         {"d":dt_cad, "t":periodo, "p":nome, "e":emp, "o":obs, "r":resp, "reg":agora})
+                                s.execute(text("INSERT INTO agendamentos (data, turno, paciente, empresa, observacao, responsavel, registro, status) VALUES (:d,:t,:p,:e,:o,:r,:reg, 'Pendente')"),
+                                          {"d":dt_cad, "t":periodo, "p":nome, "e":emp, "o":obs, "r":resp, "reg":agora})
                                 s.commit()
                             st.session_state.data_sel = dt_cad
                             st.success("✅ Sucesso!")
@@ -307,6 +311,26 @@ def main():
         st.warning(f"Agenda bloqueada. ({dict_bloqueios[st.session_state.data_sel]})")
 
     df_dia = conn.query("SELECT * FROM agendamentos WHERE data=:d ORDER BY turno DESC", params={"d":st.session_state.data_sel}, ttl=0)
+    
+    # =========================================================================
+    # LÓGICA DE ALERTA DE ATRASOS (APENAS PARA O DIA DE HOJE APÓS 08:30)
+    # =========================================================================
+    fuso_brasilia = timezone(timedelta(hours=-3))
+    agora = datetime.now(fuso_brasilia)
+    
+    # Verifica se estamos vendo a aba do dia de hoje
+    if st.session_state.data_sel == agora.date():
+        limite_hora = agora.replace(hour=8, minute=30, second=0, microsecond=0)
+        
+        # Se for depois das 08:30, procuramos pacientes da manhã pendentes
+        if agora > limite_hora and not df_dia.empty and 'status' in df_dia.columns:
+            faltosos_df = df_dia[(df_dia['turno'] == 'Manhã') & (df_dia['status'] == 'Pendente')]
+            
+            if not faltosos_df.empty:
+                lista_nomes = ", ".join(faltosos_df['paciente'].tolist())
+                st.error(f"🚨 **ATENÇÃO:** Já passou das 08:30! Os seguintes funcionários ainda **NÃO COMPARECERAM**: {lista_nomes}. Lembre-se de notificar o cliente!")
+    # =========================================================================
+
     col_m, col_t = st.columns(2)
     
     with col_m:
@@ -316,20 +340,34 @@ def main():
             st.info("Nenhum paciente agendado.")
         else:
             for _, r in lista_m.iterrows():
-                # Formatação Compacta do Cartão
+                # Lógica visual de cores de status
+                status_atual = r.get('status', 'Pendente')
+                cor_borda = "#2E7D32" if status_atual == 'Presente' else "#FF9800"
+                
                 st.markdown(f"""
-                <div class="paciente-card">
+                <div class="paciente-card" style="border-left: 5px solid {cor_borda};">
                     <b>👤 {r['paciente']}</b> | 🏢 {r['empresa']}<br>
                     <span style="font-size: 0.9em;"><b>📝 OBS:</b> {r['observacao'] if r['observacao'] else '-'}</span><br>
-                    <span style="font-size: 0.8em; color: #666;">✍️ Por: {r['responsavel']} | 🕒 {r['registro']}</span>
+                    <span style="font-size: 0.8em; color: #666;">✍️ Por: {r['responsavel']} | 🕒 {r['registro']}</span><br>
+                    <span style="font-size: 0.85em; font-weight: bold; color: {cor_borda};">Status: {status_atual.upper()}</span>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento"):
-                    with conn.session as s:
-                        s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
-                        s.commit()
-                    st.rerun()
+                # Botões alinhados
+                c1, c2 = st.columns(2)
+                with c1:
+                    if status_atual == 'Pendente':
+                        if st.button("✅ Presente", key=f"conf_{r['id']}", help="Confirmar Presença", use_container_width=True):
+                            with conn.session as s:
+                                s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id":r["id"]})
+                                s.commit()
+                            st.rerun()
+                with c2:
+                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento", use_container_width=True):
+                        with conn.session as s:
+                            s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
+                            s.commit()
+                        st.rerun()
 
     with col_t:
         st.markdown("#### ☀️ Período da Tarde")
@@ -338,20 +376,32 @@ def main():
             st.info("Nenhum paciente agendado.")
         else:
             for _, r in lista_t.iterrows():
-                # Formatação Compacta do Cartão
+                status_atual = r.get('status', 'Pendente')
+                cor_borda = "#2E7D32" if status_atual == 'Presente' else "#FF9800"
+                
                 st.markdown(f"""
-                <div class="paciente-card">
+                <div class="paciente-card" style="border-left: 5px solid {cor_borda};">
                     <b>👤 {r['paciente']}</b> | 🏢 {r['empresa']}<br>
                     <span style="font-size: 0.9em;"><b>📝 OBS:</b> {r['observacao'] if r['observacao'] else '-'}</span><br>
-                    <span style="font-size: 0.8em; color: #666;">✍️ Por: {r['responsavel']} | 🕒 {r['registro']}</span>
+                    <span style="font-size: 0.8em; color: #666;">✍️ Por: {r['responsavel']} | 🕒 {r['registro']}</span><br>
+                    <span style="font-size: 0.85em; font-weight: bold; color: {cor_borda};">Status: {status_atual.upper()}</span>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento"):
-                    with conn.session as s:
-                        s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
-                        s.commit()
-                    st.rerun()
+                c1, c2 = st.columns(2)
+                with c1:
+                    if status_atual == 'Pendente':
+                        if st.button("✅ Presente", key=f"conf_{r['id']}", help="Confirmar Presença", use_container_width=True):
+                            with conn.session as s:
+                                s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id":r["id"]})
+                                s.commit()
+                            st.rerun()
+                with c2:
+                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento", use_container_width=True):
+                        with conn.session as s:
+                            s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
+                            s.commit()
+                        st.rerun()
 
     # ==========================================
     # RELATÓRIO MENSAL (PLANILHA)
@@ -360,7 +410,7 @@ def main():
     st.markdown(f"### 📊 Planilha Mensal: {titulo_mes}")
     
     mes_formatado = f"{st.session_state.mes_ref.year}-{st.session_state.mes_ref.month:02d}"
-    df_mes_relatorio = conn.query(f"SELECT data, turno, paciente, empresa, observacao, responsavel, registro FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
+    df_mes_relatorio = conn.query(f"SELECT data, turno, paciente, empresa, observacao, responsavel, registro, status FROM agendamentos WHERE CAST(data AS TEXT) LIKE '{mes_formatado}-%' ORDER BY data ASC, turno DESC", ttl=0)
     
     if df_mes_relatorio.empty:
         st.info("Nenhum agendamento encontrado para este mês.")
@@ -368,7 +418,7 @@ def main():
         df_mes_relatorio = df_mes_relatorio.rename(columns={
             'data': 'Data do Exame', 'turno': 'Turno', 'paciente': 'Paciente',
             'empresa': 'Empresa', 'observacao': 'Observação', 'responsavel': 'Responsável',
-            'registro': 'Registrado Em (Data/Hora)'
+            'registro': 'Registrado Em', 'status': 'Status da Presença'
         })
         df_mes_relatorio['Data do Exame'] = pd.to_datetime(df_mes_relatorio['Data do Exame']).dt.strftime('%d/%m/%Y')
         

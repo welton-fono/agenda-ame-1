@@ -313,22 +313,68 @@ def main():
     df_dia = conn.query("SELECT * FROM agendamentos WHERE data=:d ORDER BY turno DESC", params={"d":st.session_state.data_sel}, ttl=0)
     
     # =========================================================================
-    # LÓGICA DE ALERTA DE ATRASOS (APENAS PARA O DIA DE HOJE APÓS 08:30)
+    # LÓGICA DE ALERTA DE ATRASOS PISCANTE E NOTIFICAÇÃO NO WINDOWS
     # =========================================================================
     fuso_brasilia = timezone(timedelta(hours=-3))
     agora = datetime.now(fuso_brasilia)
     
-    # Verifica se estamos vendo a aba do dia de hoje
     if st.session_state.data_sel == agora.date():
         limite_hora = agora.replace(hour=8, minute=30, second=0, microsecond=0)
         
-        # Se for depois das 08:30, procuramos pacientes da manhã pendentes
         if agora > limite_hora and not df_dia.empty and 'status' in df_dia.columns:
             faltosos_df = df_dia[(df_dia['turno'] == 'Manhã') & (df_dia['status'] == 'Pendente')]
             
             if not faltosos_df.empty:
                 lista_nomes = ", ".join(faltosos_df['paciente'].tolist())
-                st.error(f"🚨 **ATENÇÃO:** Já passou das 08:30! Os seguintes funcionários ainda **NÃO COMPARECERAM**: {lista_nomes}. Lembre-se de notificar o cliente!")
+                
+                # HTML com CSS de Animação (Piscar) e Script de Notificação Web
+                alerta_html = f"""
+                <style>
+                @keyframes alerta-pisca-anim {{
+                    0% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); }}
+                    50% {{ background-color: #d32f2f; color: white; transform: scale(1.02); box-shadow: 0 0 25px rgba(211,47,47,0.9); border-color: #ff0000; }}
+                    100% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); }}
+                }}
+                .caixa-alerta-pisca {{
+                    animation: alerta-pisca-anim 1.2s infinite;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border: 3px solid #b71c1c;
+                    text-align: center;
+                    margin-bottom: 20px;
+                    font-family: 'Inter', sans-serif;
+                }}
+                .caixa-alerta-pisca h3, .caixa-alerta-pisca p {{
+                    color: inherit; 
+                    margin: 5px 0;
+                }}
+                </style>
+                
+                <div class="caixa-alerta-pisca">
+                    <h3>🚨 ATENÇÃO: ATRASO DETECTADO! 🚨</h3>
+                    <p style="font-weight: bold;">Já passou das 08:30! Os seguintes funcionários ainda NÃO COMPARECERAM:</p>
+                    <p style="font-size: 1.3rem; font-weight: 800; text-transform: uppercase;">{lista_nomes}</p>
+                    <p>Lembre-se de notificar a empresa/cliente!</p>
+                </div>
+                
+                <script>
+                // Código para gerar a notificação no cantinho do Windows/Mac mesmo minimizado
+                if (Notification.permission === "granted") {{
+                    new Notification("🚨 AME - Atraso de Funcionário!", {{
+                        body: "Os seguintes funcionários não compareceram: {lista_nomes}. Verifique o sistema!"
+                    }});
+                }} else if (Notification.permission !== "denied") {{
+                    Notification.requestPermission().then(permission => {{
+                        if (permission === "granted") {{
+                            new Notification("🚨 AME - Atraso de Funcionário!", {{
+                                body: "Os seguintes funcionários não compareceram: {lista_nomes}. Verifique o sistema!"
+                            }});
+                        }}
+                    }});
+                }}
+                </script>
+                """
+                st.markdown(alerta_html, unsafe_allow_html=True)
     # =========================================================================
 
     col_m, col_t = st.columns(2)
@@ -340,7 +386,6 @@ def main():
             st.info("Nenhum paciente agendado.")
         else:
             for _, r in lista_m.iterrows():
-                # Lógica visual de cores de status
                 status_atual = r.get('status', 'Pendente')
                 cor_borda = "#2E7D32" if status_atual == 'Presente' else "#FF9800"
                 
@@ -353,7 +398,6 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Botões alinhados
                 c1, c2 = st.columns(2)
                 with c1:
                     if status_atual == 'Pendente':

@@ -55,11 +55,11 @@ st.markdown("""
         color: #2E7D32;
         border-radius: 8px !important;
         min-height: 35px; 
-        padding: 5px 10px !important;
+        padding: 5px 8px !important;
         font-weight: 600;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         transition: all 0.3s ease;
-        font-size: 0.85rem !important;
+        font-size: 0.8rem !important;
     }
     .stButton>button:hover {
         transform: translateY(-2px);
@@ -170,6 +170,7 @@ def main():
     if 'data_sel' not in st.session_state: st.session_state.data_sel = date.today()
     if 'mes_ref' not in st.session_state: st.session_state.mes_ref = date.today().replace(day=1)
     if 'edit_id' not in st.session_state: st.session_state.edit_id = None
+    if 'sub_id' not in st.session_state: st.session_state.sub_id = None # Controle para Substituição
 
     df_bloqueios = conn.query("SELECT data, motivo FROM datas_bloqueadas", ttl=0)
     dict_bloqueios = {row['data']: row['motivo'] for _, row in df_bloqueios.iterrows()}
@@ -185,7 +186,7 @@ def main():
         st.markdown('<div class="logo-ame">AME</div>', unsafe_allow_html=True)
         st.markdown('<div class="sub-logo">Assistência Médica Especializada</div>', unsafe_allow_html=True)
         
-        aba_novo, aba_busca = st.tabs(["🏥 Novo Agendamento", "🔍 Buscar"])
+        aba_novo, aba_busca = st.tabs(["🏥 Novo", "🔍 Buscar"])
         
         with aba_novo:
             dt_cad = st.date_input("Selecione a Data", value=st.session_state.data_sel)
@@ -225,7 +226,6 @@ def main():
         with aba_busca:
             busca = st.text_input("Pesquisar Paciente/Empresa:")
             if busca:
-                # CORREÇÃO 1: Prevenção de SQL Injection usando :b (bind param)
                 busca_param = f"%{busca}%"
                 res_busca = conn.query("SELECT data, turno, paciente, empresa, status FROM agendamentos WHERE paciente ILIKE :b OR empresa ILIKE :b ORDER BY data DESC LIMIT 10", params={"b": busca_param}, ttl=0)
                 
@@ -333,17 +333,10 @@ def main():
         st.markdown(f"### 📋 Atendimento do Dia: {data_f}")
     
     with c_botao_print:
-        # CORREÇÃO 2: Botão HTML Seguro para impressão (Evita tela branca)
         js_print_dia = """
         <button onclick="window.parent.print()" style="width: 100%; border: 1px solid #2E7D32; background: white; color: #2E7D32; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif; transition: 0.3s; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
             🖨️ IMPRIMIR O DIA
         </button>
-        <style>
-            button:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 10px rgba(46, 125, 50, 0.2);
-            }
-        </style>
         """
         components.html(js_print_dia, height=50)
 
@@ -393,6 +386,7 @@ def main():
                     <h3 style='margin-top:0;'>🚨 ATENÇÃO: ATRASO DETECTADO! 🚨</h3>
                     <p style="font-weight: bold;">Já passou das 08:30! Os seguintes funcionários ainda estão PENDENTES:</p>
                     <p style="font-size: 1.3rem; font-weight: 800; text-transform: uppercase;">{lista_nomes}</p>
+                    <p>Você pode marcá-los como Faltou ou clicar em "🔁 Trocar" para encaixar alguém no lugar!</p>
                 </div>
                 """
                 st.markdown(alerta_html, unsafe_allow_html=True)
@@ -401,28 +395,51 @@ def main():
     
     def exibir_cartao_paciente(r, coluna):
         with coluna:
-            # CORREÇÃO 3: Controle Seguro de "NaN" / Vazio nas Observações
             obs_texto = "-"
             if not pd.isna(r['observacao']) and str(r['observacao']).strip() != "":
                 obs_texto = str(r['observacao']).strip()
 
-            # ✏️ MODO EDIÇÃO
-            if st.session_state.edit_id == r['id']:
+            # 🔁 MODO SUBSTITUIÇÃO
+            if st.session_state.sub_id == r['id']:
+                with st.form(key=f"form_sub_{r['id']}"):
+                    st.markdown(f"**🔁 Substituindo: {r['paciente']}**")
+                    novo_nome = st.text_input("Nome do Substituto").upper()
+                    nova_emp = st.text_input("Empresa", str(r['empresa'])).upper()
+                    nova_obs = st.text_input("Observação (Opcional)")
+                    novo_resp = st.text_input("Responsável pela troca", str(r['responsavel'])).upper()
+                    
+                    c_salvar, c_cancelar = st.columns(2)
+                    if c_salvar.form_submit_button("✅ Confirmar Troca"):
+                        if novo_nome and nova_emp:
+                            # Adiciona nota automática sobre a troca na observação
+                            obs_extra = f"[Substituiu: {r['paciente']}]"
+                            obs_final = f"{nova_obs} {obs_extra}".strip() if nova_obs else obs_extra
+
+                            with conn.session as s:
+                                s.execute(text("UPDATE agendamentos SET paciente=:p, empresa=:e, observacao=:o, responsavel=:r, status='Presente' WHERE id=:id"), 
+                                          {"p":novo_nome, "e":nova_emp, "o":obs_final, "r":novo_resp, "id": int(r['id'])})
+                                s.commit()
+                            st.session_state.sub_id = None
+                            st.rerun()
+                        else:
+                            st.warning("Preencha o nome do substituto e a empresa.")
+                    if c_cancelar.form_submit_button("❌ Cancelar"):
+                        st.session_state.sub_id = None
+                        st.rerun()
+
+            # ✏️ MODO EDIÇÃO NORMAL
+            elif st.session_state.edit_id == r['id']:
                 with st.form(key=f"form_edit_{r['id']}"):
                     st.markdown(f"**✏️ Editando Agendamento**")
                     novo_nome = st.text_input("Paciente", str(r['paciente'])).upper()
                     nova_emp = st.text_input("Empresa", str(r['empresa'])).upper()
-                    
-                    # Previne que exiba "NaN" no input de texto
                     valor_obs_edit = "" if pd.isna(r['observacao']) else str(r['observacao'])
                     nova_obs = st.text_input("Observação", valor_obs_edit)
-                    
                     novo_resp = st.text_input("Responsável", str(r['responsavel'])).upper()
                     
                     c_salvar, c_cancelar = st.columns(2)
                     if c_salvar.form_submit_button("💾 Salvar Alterações"):
                         with conn.session as s:
-                            # CORREÇÃO 4: Garantir que o ID seja int na hora do UPDATE/DELETE
                             s.execute(text("UPDATE agendamentos SET paciente=:p, empresa=:e, observacao=:o, responsavel=:r WHERE id=:id"), 
                                       {"p":novo_nome, "e":nova_emp, "o":nova_obs, "r":novo_resp, "id": int(r['id'])})
                             s.commit()
@@ -431,6 +448,7 @@ def main():
                     if c_cancelar.form_submit_button("❌ Cancelar"):
                         st.session_state.edit_id = None
                         st.rerun()
+
             # 👁️ MODO VISUALIZAÇÃO NORMAL
             else:
                 status_atual = r.get('status', 'Pendente')
@@ -445,7 +463,8 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                c1, c2, c3, c4 = st.columns(4)
+                # 5 Colunas para encaixar os 5 botões de ação
+                c1, c2, c3, c4, c5 = st.columns(5)
                 with c1:
                     if status_atual == 'Pendente':
                         if st.button("✅ Veio", key=f"conf_{r['id']}", help="Presente", use_container_width=True):
@@ -460,17 +479,22 @@ def main():
                                 s.commit()
                             st.rerun()
                 with c2:
+                    # Botão Faltou só aparece se ele estiver pendente
                     if status_atual == 'Pendente':
-                        if st.button("❌ Faltou", key=f"faltou_{r['id']}", help="Faltou", use_container_width=True):
+                        if st.button("❌ Falta", key=f"faltou_{r['id']}", help="Faltou", use_container_width=True):
                             with conn.session as s:
                                 s.execute(text("UPDATE agendamentos SET status='Faltou' WHERE id=:id"), {"id": int(r["id"])})
                                 s.commit()
                             st.rerun()
                 with c3:
-                    if st.button("✏️ Editar", key=f"edit_{r['id']}", help="Editar Dados", use_container_width=True):
-                        st.session_state.edit_id = r['id']
+                    if st.button("🔁 Trocar", key=f"sub_{r['id']}", help="Encaixar alguém na vaga", use_container_width=True):
+                        st.session_state.sub_id = r['id']
                         st.rerun()
                 with c4:
+                    if st.button("✏️ Edit", key=f"edit_{r['id']}", help="Editar Dados", use_container_width=True):
+                        st.session_state.edit_id = r['id']
+                        st.rerun()
+                with c5:
                     if st.button("🗑️ Del", key=f"del_{r['id']}", help="Remover", use_container_width=True):
                         with conn.session as s:
                             s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id": int(r["id"])})

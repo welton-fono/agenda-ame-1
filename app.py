@@ -114,7 +114,8 @@ st.markdown("""
         .stHeader, 
         [data-testid="stHeader"],
         div[data-testid="stHorizontalBlock"]:has(button), 
-        div[class*="st-emotion-cache-"] > div:has(button) { 
+        div[class*="st-emotion-cache-"] > div:has(button),
+        iframe { 
             display: none !important; 
         }
         .stApp { background-color: white !important; }
@@ -303,9 +304,19 @@ def main():
     c_titulo, c_botao_print = st.columns([4, 1])
     with c_titulo:
         st.markdown(f"### 📋 Atendimento do Dia: {data_f}")
+    
     with c_botao_print:
         if st.button("🖨️ IMPRIMIR O DIA", use_container_width=True):
-            components.html("<script>window.print();</script>", height=0)
+            js_print = """
+            <script>
+            try {
+                window.parent.print();
+            } catch (e) {
+                alert("Para imprimir a tela perfeitamente, por favor pressione as teclas Ctrl + P (ou Cmd + P) no seu teclado!");
+            }
+            </script>
+            """
+            components.html(js_print, height=0, width=0)
 
     if st.session_state.data_sel in dict_bloqueios:
         st.warning(f"Agenda bloqueada. ({dict_bloqueios[st.session_state.data_sel]})")
@@ -313,22 +324,50 @@ def main():
     df_dia = conn.query("SELECT * FROM agendamentos WHERE data=:d ORDER BY turno DESC", params={"d":st.session_state.data_sel}, ttl=0)
     
     # =========================================================================
-    # LÓGICA DE ALERTA DE ATRASOS (APENAS PARA O DIA DE HOJE APÓS 08:30)
+    # LÓGICA DE ALERTA DE ATRASOS (100% SEGURA EM CSS, SEM TRAVAR O SISTEMA)
     # =========================================================================
     fuso_brasilia = timezone(timedelta(hours=-3))
     agora = datetime.now(fuso_brasilia)
     
-    # Verifica se estamos vendo a aba do dia de hoje
     if st.session_state.data_sel == agora.date():
         limite_hora = agora.replace(hour=8, minute=30, second=0, microsecond=0)
         
-        # Se for depois das 08:30, procuramos pacientes da manhã pendentes
         if agora > limite_hora and not df_dia.empty and 'status' in df_dia.columns:
             faltosos_df = df_dia[(df_dia['turno'] == 'Manhã') & (df_dia['status'] == 'Pendente')]
             
             if not faltosos_df.empty:
-                lista_nomes = ", ".join(faltosos_df['paciente'].tolist())
-                st.error(f"🚨 **ATENÇÃO:** Já passou das 08:30! Os seguintes funcionários ainda **NÃO COMPARECERAM**: {lista_nomes}. Lembre-se de notificar o cliente!")
+                # Transforma a lista de nomes num texto separado por vírgula e garante que sejam strings
+                lista_nomes = ", ".join([str(nome) for nome in faltosos_df['paciente'].tolist() if pd.notnull(nome)])
+                
+                alerta_html = f"""
+                <style>
+                @keyframes alerta-pisca-anim {{
+                    0% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); border-color: #ffcdd2; }}
+                    50% {{ background-color: #d32f2f; color: white; transform: scale(1.02); box-shadow: 0 0 25px rgba(211,47,47,0.9); border-color: #ff0000; }}
+                    100% {{ background-color: #ffebee; color: #c62828; transform: scale(1); box-shadow: 0 0 5px rgba(211,47,47,0.3); border-color: #ffcdd2; }}
+                }}
+                .caixa-alerta-pisca {{
+                    animation: alerta-pisca-anim 1.5s infinite;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border: 3px solid #b71c1c;
+                    text-align: center;
+                    margin-bottom: 20px;
+                    font-family: 'Inter', sans-serif;
+                }}
+                .caixa-alerta-pisca h3, .caixa-alerta-pisca p {{
+                    margin: 5px 0;
+                }}
+                </style>
+                
+                <div class="caixa-alerta-pisca">
+                    <h3>🚨 ATENÇÃO: ATRASO DETECTADO! 🚨</h3>
+                    <p style="font-weight: bold;">Já passou das 08:30! Os seguintes funcionários ainda NÃO COMPARECERAM (Pendentes):</p>
+                    <p style="font-size: 1.3rem; font-weight: 800; text-transform: uppercase;">{lista_nomes}</p>
+                    <p>Lembre-se de notificar a empresa/cliente ou marcar como "Faltou"!</p>
+                </div>
+                """
+                st.markdown(alerta_html, unsafe_allow_html=True)
     # =========================================================================
 
     col_m, col_t = st.columns(2)
@@ -340,9 +379,15 @@ def main():
             st.info("Nenhum paciente agendado.")
         else:
             for _, r in lista_m.iterrows():
-                # Lógica visual de cores de status
                 status_atual = r.get('status', 'Pendente')
-                cor_borda = "#2E7D32" if status_atual == 'Presente' else "#FF9800"
+                
+                # Definição de Cores com base no Status
+                if status_atual == 'Presente':
+                    cor_borda = "#2E7D32"  # Verde
+                elif status_atual == 'Faltou':
+                    cor_borda = "#C62828"  # Vermelho
+                else:
+                    cor_borda = "#FF9800"  # Laranja (Pendente)
                 
                 st.markdown(f"""
                 <div class="paciente-card" style="border-left: 5px solid {cor_borda};">
@@ -353,8 +398,7 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Botões alinhados
-                c1, c2 = st.columns(2)
+                c1, c2, c3 = st.columns(3)
                 with c1:
                     if status_atual == 'Pendente':
                         if st.button("✅ Presente", key=f"conf_{r['id']}", help="Confirmar Presença", use_container_width=True):
@@ -362,8 +406,21 @@ def main():
                                 s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id":r["id"]})
                                 s.commit()
                             st.rerun()
+                    else:
+                        if st.button("🔄 Voltar", key=f"undo_{r['id']}", help="Voltar para Pendente", use_container_width=True):
+                            with conn.session as s:
+                                s.execute(text("UPDATE agendamentos SET status='Pendente' WHERE id=:id"), {"id":r["id"]})
+                                s.commit()
+                            st.rerun()
                 with c2:
-                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento", use_container_width=True):
+                    if status_atual == 'Pendente':
+                        if st.button("❌ Faltou", key=f"faltou_{r['id']}", help="Marcar que o funcionário faltou", use_container_width=True):
+                            with conn.session as s:
+                                s.execute(text("UPDATE agendamentos SET status='Faltou' WHERE id=:id"), {"id":r["id"]})
+                                s.commit()
+                            st.rerun()
+                with c3:
+                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento do sistema", use_container_width=True):
                         with conn.session as s:
                             s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
                             s.commit()
@@ -377,7 +434,14 @@ def main():
         else:
             for _, r in lista_t.iterrows():
                 status_atual = r.get('status', 'Pendente')
-                cor_borda = "#2E7D32" if status_atual == 'Presente' else "#FF9800"
+                
+                # Definição de Cores com base no Status
+                if status_atual == 'Presente':
+                    cor_borda = "#2E7D32"  # Verde
+                elif status_atual == 'Faltou':
+                    cor_borda = "#C62828"  # Vermelho
+                else:
+                    cor_borda = "#FF9800"  # Laranja (Pendente)
                 
                 st.markdown(f"""
                 <div class="paciente-card" style="border-left: 5px solid {cor_borda};">
@@ -388,7 +452,7 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                c1, c2 = st.columns(2)
+                c1, c2, c3 = st.columns(3)
                 with c1:
                     if status_atual == 'Pendente':
                         if st.button("✅ Presente", key=f"conf_{r['id']}", help="Confirmar Presença", use_container_width=True):
@@ -396,8 +460,21 @@ def main():
                                 s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id":r["id"]})
                                 s.commit()
                             st.rerun()
+                    else:
+                        if st.button("🔄 Voltar", key=f"undo_{r['id']}", help="Voltar para Pendente", use_container_width=True):
+                            with conn.session as s:
+                                s.execute(text("UPDATE agendamentos SET status='Pendente' WHERE id=:id"), {"id":r["id"]})
+                                s.commit()
+                            st.rerun()
                 with c2:
-                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento", use_container_width=True):
+                    if status_atual == 'Pendente':
+                        if st.button("❌ Faltou", key=f"faltou_{r['id']}", help="Marcar que o funcionário faltou", use_container_width=True):
+                            with conn.session as s:
+                                s.execute(text("UPDATE agendamentos SET status='Faltou' WHERE id=:id"), {"id":r["id"]})
+                                s.commit()
+                            st.rerun()
+                with c3:
+                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento do sistema", use_container_width=True):
                         with conn.session as s:
                             s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
                             s.commit()

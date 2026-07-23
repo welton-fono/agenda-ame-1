@@ -96,7 +96,7 @@ st.markdown("""
         text-align: center;
     }
 
-    /* Cards de Pacientes (Agora muito mais compactos) */
+    /* Cards de Pacientes */
     .paciente-card {
         background: white;
         padding: 12px 15px; 
@@ -169,7 +169,7 @@ def main():
     
     if 'data_sel' not in st.session_state: st.session_state.data_sel = date.today()
     if 'mes_ref' not in st.session_state: st.session_state.mes_ref = date.today().replace(day=1)
-    if 'edit_id' not in st.session_state: st.session_state.edit_id = None # Controle do modo de edição
+    if 'edit_id' not in st.session_state: st.session_state.edit_id = None
 
     df_bloqueios = conn.query("SELECT data, motivo FROM datas_bloqueadas", ttl=0)
     dict_bloqueios = {row['data']: row['motivo'] for _, row in df_bloqueios.iterrows()}
@@ -225,7 +225,10 @@ def main():
         with aba_busca:
             busca = st.text_input("Pesquisar Paciente/Empresa:")
             if busca:
-                res_busca = conn.query(f"SELECT data, turno, paciente, empresa, status FROM agendamentos WHERE paciente ILIKE '%{busca}%' OR empresa ILIKE '%{busca}%' ORDER BY data DESC LIMIT 10", ttl=0)
+                # CORREÇÃO 1: Prevenção de SQL Injection usando :b (bind param)
+                busca_param = f"%{busca}%"
+                res_busca = conn.query("SELECT data, turno, paciente, empresa, status FROM agendamentos WHERE paciente ILIKE :b OR empresa ILIKE :b ORDER BY data DESC LIMIT 10", params={"b": busca_param}, ttl=0)
+                
                 if not res_busca.empty:
                     st.caption("Últimos 10 resultados encontrados:")
                     for _, r_b in res_busca.iterrows():
@@ -328,18 +331,21 @@ def main():
     c_titulo, c_botao_print = st.columns([4, 1])
     with c_titulo:
         st.markdown(f"### 📋 Atendimento do Dia: {data_f}")
+    
     with c_botao_print:
-        if st.button("🖨️ IMPRIMIR O DIA", use_container_width=True):
-            js_print = """
-            <script>
-            try {
-                window.parent.print();
-            } catch (e) {
-                alert("Para imprimir a tela, por favor pressione as teclas Ctrl + P!");
+        # CORREÇÃO 2: Botão HTML Seguro para impressão (Evita tela branca)
+        js_print_dia = """
+        <button onclick="window.parent.print()" style="width: 100%; border: 1px solid #2E7D32; background: white; color: #2E7D32; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif; transition: 0.3s; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+            🖨️ IMPRIMIR O DIA
+        </button>
+        <style>
+            button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 10px rgba(46, 125, 50, 0.2);
             }
-            </script>
-            """
-            components.html(js_print, height=0, width=0)
+        </style>
+        """
+        components.html(js_print_dia, height=50)
 
     if st.session_state.data_sel in dict_bloqueios:
         st.warning(f"Agenda bloqueada. ({dict_bloqueios[st.session_state.data_sel]})")
@@ -395,20 +401,30 @@ def main():
     
     def exibir_cartao_paciente(r, coluna):
         with coluna:
+            # CORREÇÃO 3: Controle Seguro de "NaN" / Vazio nas Observações
+            obs_texto = "-"
+            if not pd.isna(r['observacao']) and str(r['observacao']).strip() != "":
+                obs_texto = str(r['observacao']).strip()
+
             # ✏️ MODO EDIÇÃO
             if st.session_state.edit_id == r['id']:
                 with st.form(key=f"form_edit_{r['id']}"):
                     st.markdown(f"**✏️ Editando Agendamento**")
-                    novo_nome = st.text_input("Paciente", r['paciente']).upper()
-                    nova_emp = st.text_input("Empresa", r['empresa']).upper()
-                    nova_obs = st.text_input("Observação", r['observacao'] if r['observacao'] else "")
-                    novo_resp = st.text_input("Responsável", r['responsavel']).upper()
+                    novo_nome = st.text_input("Paciente", str(r['paciente'])).upper()
+                    nova_emp = st.text_input("Empresa", str(r['empresa'])).upper()
+                    
+                    # Previne que exiba "NaN" no input de texto
+                    valor_obs_edit = "" if pd.isna(r['observacao']) else str(r['observacao'])
+                    nova_obs = st.text_input("Observação", valor_obs_edit)
+                    
+                    novo_resp = st.text_input("Responsável", str(r['responsavel'])).upper()
                     
                     c_salvar, c_cancelar = st.columns(2)
                     if c_salvar.form_submit_button("💾 Salvar Alterações"):
                         with conn.session as s:
+                            # CORREÇÃO 4: Garantir que o ID seja int na hora do UPDATE/DELETE
                             s.execute(text("UPDATE agendamentos SET paciente=:p, empresa=:e, observacao=:o, responsavel=:r WHERE id=:id"), 
-                                      {"p":novo_nome, "e":nova_emp, "o":nova_obs, "r":novo_resp, "id":r['id']})
+                                      {"p":novo_nome, "e":nova_emp, "o":nova_obs, "r":novo_resp, "id": int(r['id'])})
                             s.commit()
                         st.session_state.edit_id = None
                         st.rerun()
@@ -423,7 +439,7 @@ def main():
                 st.markdown(f"""
                 <div class="paciente-card" style="border-left: 5px solid {cor_borda};">
                     <b>👤 {r['paciente']}</b> | 🏢 {r['empresa']}<br>
-                    <span style="font-size: 0.9em;"><b>📝 OBS:</b> {r['observacao'] if r['observacao'] else '-'}</span><br>
+                    <span style="font-size: 0.9em;"><b>📝 OBS:</b> {obs_texto}</span><br>
                     <span style="font-size: 0.8em; color: #666;">✍️ Por: {r['responsavel']} | 🕒 {r['registro']}</span><br>
                     <span style="font-size: 0.85em; font-weight: bold; color: {cor_borda};">Status: {status_atual.upper()}</span>
                 </div>
@@ -434,20 +450,20 @@ def main():
                     if status_atual == 'Pendente':
                         if st.button("✅ Veio", key=f"conf_{r['id']}", help="Presente", use_container_width=True):
                             with conn.session as s:
-                                s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id":r["id"]})
+                                s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id": int(r["id"])})
                                 s.commit()
                             st.rerun()
                     else:
                         if st.button("🔄 Voltar", key=f"undo_{r['id']}", help="Voltar Status", use_container_width=True):
                             with conn.session as s:
-                                s.execute(text("UPDATE agendamentos SET status='Pendente' WHERE id=:id"), {"id":r["id"]})
+                                s.execute(text("UPDATE agendamentos SET status='Pendente' WHERE id=:id"), {"id": int(r["id"])})
                                 s.commit()
                             st.rerun()
                 with c2:
                     if status_atual == 'Pendente':
                         if st.button("❌ Faltou", key=f"faltou_{r['id']}", help="Faltou", use_container_width=True):
                             with conn.session as s:
-                                s.execute(text("UPDATE agendamentos SET status='Faltou' WHERE id=:id"), {"id":r["id"]})
+                                s.execute(text("UPDATE agendamentos SET status='Faltou' WHERE id=:id"), {"id": int(r["id"])})
                                 s.commit()
                             st.rerun()
                 with c3:
@@ -457,7 +473,7 @@ def main():
                 with c4:
                     if st.button("🗑️ Del", key=f"del_{r['id']}", help="Remover", use_container_width=True):
                         with conn.session as s:
-                            s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
+                            s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id": int(r["id"])})
                             s.commit()
                         st.rerun()
 
@@ -501,6 +517,23 @@ def main():
         with col_down:
             csv_data = df_mes_relatorio.to_csv(index=False, sep=';').encode('utf-8-sig')
             st.download_button("📥 Baixar Planilha", data=csv_data, file_name=f"Agendamentos_{titulo_mes.replace(' ', '_')}.csv", mime="text/csv", use_container_width=True)
+            
+        with col_print:
+            html_table = df_mes_relatorio.to_html(index=False).replace('\n', '')
+            js_print_code = f"""
+            <button onclick="printTable()" style="width: 100%; border: 1px solid #2E7D32; background: white; color: #2E7D32; padding: 5px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; font-family: sans-serif; transition: 0.3s;">
+                🖨️ IMPRIMIR PLANILHA
+            </button>
+            <script>
+            function printTable() {{
+                var printWin = window.open('', '', 'height=800,width=1000');
+                printWin.document.write('<html><head><title>Impressão - {titulo_mes}</title><style>body {{ font-family: sans-serif; }} table {{width:100%; border-collapse: collapse; margin-top: 20px;}} th, td {{border: 1px solid #444; padding: 10px; text-align: left;}} th {{background-color: #f2f2f2;}} h2 {{ color: #1B5E20; text-align: center; }}</style></head><body><h2>Agendamentos - {titulo_mes}</h2>{html_table}</body></html>');
+                printWin.document.close();
+                setTimeout(function() {{ printWin.print(); printWin.close(); }}, 300);
+            }}
+            </script>
+            """
+            components.html(js_print_code, height=50)
 
 if __name__ == "__main__":
     main()

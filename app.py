@@ -54,11 +54,12 @@ st.markdown("""
         background-color: #ffffff;
         color: #2E7D32;
         border-radius: 8px !important;
-        min-height: 40px; 
-        padding: 5px 15px !important;
+        min-height: 35px; 
+        padding: 5px 10px !important;
         font-weight: 600;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         transition: all 0.3s ease;
+        font-size: 0.85rem !important;
     }
     .stButton>button:hover {
         transform: translateY(-2px);
@@ -106,6 +107,17 @@ st.markdown("""
         line-height: 1.4;
     }
 
+    /* Resultados da Busca */
+    .busca-card {
+        background: #e8f5e9;
+        border-left: 4px solid #2E7D32;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 8px;
+        font-size: 0.85rem;
+        color: #333;
+    }
+
     /* --- REGRAS DE IMPRESSÃO --- */
     @media print {
         section[data-testid="stSidebar"], 
@@ -143,12 +155,8 @@ except Exception as e:
 
 def inicializar_banco():
     with conn.session as s:
-        # Tabela com campo status
         s.execute(text("CREATE TABLE IF NOT EXISTS agendamentos (id SERIAL PRIMARY KEY, data DATE, turno TEXT, paciente TEXT, empresa TEXT, observacao TEXT, responsavel TEXT, registro TEXT, status TEXT DEFAULT 'Pendente')"))
-        
-        # Garante que a coluna status seja adicionada caso a tabela já exista sem ela
         s.execute(text("ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Pendente'"))
-        
         s.execute(text("CREATE TABLE IF NOT EXISTS datas_bloqueadas (id SERIAL PRIMARY KEY, data DATE UNIQUE, motivo TEXT)"))
         s.execute(text("CREATE TABLE IF NOT EXISTS limites_vagas (id SERIAL PRIMARY KEY, data DATE, turno TEXT, limite INTEGER, UNIQUE(data, turno))"))
         s.commit()
@@ -161,8 +169,8 @@ def main():
     
     if 'data_sel' not in st.session_state: st.session_state.data_sel = date.today()
     if 'mes_ref' not in st.session_state: st.session_state.mes_ref = date.today().replace(day=1)
+    if 'edit_id' not in st.session_state: st.session_state.edit_id = None # Controle do modo de edição
 
-    # Carregar dados do Supabase
     df_bloqueios = conn.query("SELECT data, motivo FROM datas_bloqueadas", ttl=0)
     dict_bloqueios = {row['data']: row['motivo'] for _, row in df_bloqueios.iterrows()}
 
@@ -170,7 +178,6 @@ def main():
     dict_limites = {(row['data'], row['turno']): row['limite'] for _, row in df_limites.iterrows()}
 
     def obter_limite(d, t):
-        """Retorna o limite personalizado ou o padrão (6 Manhã, 10 Tarde)"""
         return dict_limites.get((d, t), 6 if t == "Manhã" else 10)
 
     # --- SIDEBAR ---
@@ -178,9 +185,9 @@ def main():
         st.markdown('<div class="logo-ame">AME</div>', unsafe_allow_html=True)
         st.markdown('<div class="sub-logo">Assistência Médica Especializada</div>', unsafe_allow_html=True)
         
-        # Formulário de Agendamento
-        with st.container():
-            st.markdown("### 🏥 Novo Agendamento")
+        aba_novo, aba_busca = st.tabs(["🏥 Novo Agendamento", "🔍 Buscar"])
+        
+        with aba_novo:
             dt_cad = st.date_input("Selecione a Data", value=st.session_state.data_sel)
             periodo = st.radio("Período do Exame", ["Manhã", "Tarde"], horizontal=True)
             
@@ -204,7 +211,6 @@ def main():
                     
                     if st.form_submit_button("FINALIZAR AGENDAMENTO"):
                         if nome and emp and resp:
-                            # Configuração de Horário de Brasília
                             fuso_brasilia = timezone(timedelta(hours=-3))
                             agora = datetime.now(fuso_brasilia).strftime("%d/%m/%Y %H:%M")
                             
@@ -215,6 +221,24 @@ def main():
                             st.session_state.data_sel = dt_cad
                             st.success("✅ Sucesso!")
                             st.rerun()
+
+        with aba_busca:
+            busca = st.text_input("Pesquisar Paciente/Empresa:")
+            if busca:
+                res_busca = conn.query(f"SELECT data, turno, paciente, empresa, status FROM agendamentos WHERE paciente ILIKE '%{busca}%' OR empresa ILIKE '%{busca}%' ORDER BY data DESC LIMIT 10", ttl=0)
+                if not res_busca.empty:
+                    st.caption("Últimos 10 resultados encontrados:")
+                    for _, r_b in res_busca.iterrows():
+                        d_format = pd.to_datetime(r_b['data']).strftime('%d/%m/%Y')
+                        st.markdown(f"""
+                        <div class='busca-card'>
+                            <b>{r_b['paciente']}</b><br>
+                            🏢 {r_b['empresa']}<br>
+                            📅 {d_format} ({r_b['turno']}) | Status: <b>{r_b['status']}</b>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.warning("Nenhum registro encontrado.")
 
         st.markdown("---")
         
@@ -298,13 +322,12 @@ def main():
 
     st.markdown("---")
 
-    # --- LISTA DE PACIENTES DIÁRIA ---
+    # --- LISTA DE PACIENTES DIÁRIA & DASHBOARD ---
     data_f = st.session_state.data_sel.strftime('%d/%m/%Y')
     
     c_titulo, c_botao_print = st.columns([4, 1])
     with c_titulo:
         st.markdown(f"### 📋 Atendimento do Dia: {data_f}")
-    
     with c_botao_print:
         if st.button("🖨️ IMPRIMIR O DIA", use_container_width=True):
             js_print = """
@@ -312,7 +335,7 @@ def main():
             try {
                 window.parent.print();
             } catch (e) {
-                alert("Para imprimir a tela perfeitamente, por favor pressione as teclas Ctrl + P (ou Cmd + P) no seu teclado!");
+                alert("Para imprimir a tela, por favor pressione as teclas Ctrl + P!");
             }
             </script>
             """
@@ -321,24 +344,33 @@ def main():
     if st.session_state.data_sel in dict_bloqueios:
         st.warning(f"Agenda bloqueada. ({dict_bloqueios[st.session_state.data_sel]})")
 
-    df_dia = conn.query("SELECT * FROM agendamentos WHERE data=:d ORDER BY turno DESC", params={"d":st.session_state.data_sel}, ttl=0)
+    df_dia = conn.query("SELECT * FROM agendamentos WHERE data=:d ORDER BY turno DESC, id ASC", params={"d":st.session_state.data_sel}, ttl=0)
     
-    # =========================================================================
-    # LÓGICA DE ALERTA DE ATRASOS (100% SEGURA EM CSS, SEM TRAVAR O SISTEMA)
-    # =========================================================================
+    # 📊 PAINEL DE RESUMO RÁPIDO (DASHBOARD)
+    if not df_dia.empty:
+        tot_dia = len(df_dia)
+        tot_pres = len(df_dia[df_dia['status'] == 'Presente'])
+        tot_falt = len(df_dia[df_dia['status'] == 'Faltou'])
+        tot_pend = len(df_dia[df_dia['status'] == 'Pendente'])
+        
+        st.markdown("<div style='background-color: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px;'>", unsafe_allow_html=True)
+        col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+        col_res1.metric("📌 Total Agendados", tot_dia)
+        col_res2.metric("✅ Presentes", tot_pres)
+        col_res3.metric("❌ Faltas", tot_falt)
+        col_res4.metric("⏳ Pendentes", tot_pend)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ALERTA DE ATRASOS (PISCANTE)
     fuso_brasilia = timezone(timedelta(hours=-3))
     agora = datetime.now(fuso_brasilia)
     
     if st.session_state.data_sel == agora.date():
         limite_hora = agora.replace(hour=8, minute=30, second=0, microsecond=0)
-        
         if agora > limite_hora and not df_dia.empty and 'status' in df_dia.columns:
             faltosos_df = df_dia[(df_dia['turno'] == 'Manhã') & (df_dia['status'] == 'Pendente')]
-            
             if not faltosos_df.empty:
-                # Transforma a lista de nomes num texto separado por vírgula e garante que sejam strings
                 lista_nomes = ", ".join([str(nome) for nome in faltosos_df['paciente'].tolist() if pd.notnull(nome)])
-                
                 alerta_html = f"""
                 <style>
                 @keyframes alerta-pisca-anim {{
@@ -348,46 +380,45 @@ def main():
                 }}
                 .caixa-alerta-pisca {{
                     animation: alerta-pisca-anim 1.5s infinite;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border: 3px solid #b71c1c;
-                    text-align: center;
-                    margin-bottom: 20px;
-                    font-family: 'Inter', sans-serif;
-                }}
-                .caixa-alerta-pisca h3, .caixa-alerta-pisca p {{
-                    margin: 5px 0;
+                    padding: 15px; border-radius: 8px; border: 3px solid #b71c1c; text-align: center; margin-bottom: 20px; font-family: 'Inter', sans-serif;
                 }}
                 </style>
-                
                 <div class="caixa-alerta-pisca">
-                    <h3>🚨 ATENÇÃO: ATRASO DETECTADO! 🚨</h3>
-                    <p style="font-weight: bold;">Já passou das 08:30! Os seguintes funcionários ainda NÃO COMPARECERAM (Pendentes):</p>
+                    <h3 style='margin-top:0;'>🚨 ATENÇÃO: ATRASO DETECTADO! 🚨</h3>
+                    <p style="font-weight: bold;">Já passou das 08:30! Os seguintes funcionários ainda estão PENDENTES:</p>
                     <p style="font-size: 1.3rem; font-weight: 800; text-transform: uppercase;">{lista_nomes}</p>
-                    <p>Lembre-se de notificar a empresa/cliente ou marcar como "Faltou"!</p>
                 </div>
                 """
                 st.markdown(alerta_html, unsafe_allow_html=True)
-    # =========================================================================
 
     col_m, col_t = st.columns(2)
     
-    with col_m:
-        st.markdown("#### 🌅 Período da Manhã")
-        lista_m = df_dia[df_dia['turno'] == "Manhã"] if not df_dia.empty else pd.DataFrame()
-        if lista_m.empty: 
-            st.info("Nenhum paciente agendado.")
-        else:
-            for _, r in lista_m.iterrows():
+    def exibir_cartao_paciente(r, coluna):
+        with coluna:
+            # ✏️ MODO EDIÇÃO
+            if st.session_state.edit_id == r['id']:
+                with st.form(key=f"form_edit_{r['id']}"):
+                    st.markdown(f"**✏️ Editando Agendamento**")
+                    novo_nome = st.text_input("Paciente", r['paciente']).upper()
+                    nova_emp = st.text_input("Empresa", r['empresa']).upper()
+                    nova_obs = st.text_input("Observação", r['observacao'] if r['observacao'] else "")
+                    novo_resp = st.text_input("Responsável", r['responsavel']).upper()
+                    
+                    c_salvar, c_cancelar = st.columns(2)
+                    if c_salvar.form_submit_button("💾 Salvar Alterações"):
+                        with conn.session as s:
+                            s.execute(text("UPDATE agendamentos SET paciente=:p, empresa=:e, observacao=:o, responsavel=:r WHERE id=:id"), 
+                                      {"p":novo_nome, "e":nova_emp, "o":nova_obs, "r":novo_resp, "id":r['id']})
+                            s.commit()
+                        st.session_state.edit_id = None
+                        st.rerun()
+                    if c_cancelar.form_submit_button("❌ Cancelar"):
+                        st.session_state.edit_id = None
+                        st.rerun()
+            # 👁️ MODO VISUALIZAÇÃO NORMAL
+            else:
                 status_atual = r.get('status', 'Pendente')
-                
-                # Definição de Cores com base no Status
-                if status_atual == 'Presente':
-                    cor_borda = "#2E7D32"  # Verde
-                elif status_atual == 'Faltou':
-                    cor_borda = "#C62828"  # Vermelho
-                else:
-                    cor_borda = "#FF9800"  # Laranja (Pendente)
+                cor_borda = "#2E7D32" if status_atual == 'Presente' else "#C62828" if status_atual == 'Faltou' else "#FF9800"
                 
                 st.markdown(f"""
                 <div class="paciente-card" style="border-left: 5px solid {cor_borda};">
@@ -398,87 +429,52 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                c1, c2, c3 = st.columns(3)
+                c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     if status_atual == 'Pendente':
-                        if st.button("✅ Presente", key=f"conf_{r['id']}", help="Confirmar Presença", use_container_width=True):
+                        if st.button("✅ Veio", key=f"conf_{r['id']}", help="Presente", use_container_width=True):
                             with conn.session as s:
                                 s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id":r["id"]})
                                 s.commit()
                             st.rerun()
                     else:
-                        if st.button("🔄 Voltar", key=f"undo_{r['id']}", help="Voltar para Pendente", use_container_width=True):
+                        if st.button("🔄 Voltar", key=f"undo_{r['id']}", help="Voltar Status", use_container_width=True):
                             with conn.session as s:
                                 s.execute(text("UPDATE agendamentos SET status='Pendente' WHERE id=:id"), {"id":r["id"]})
                                 s.commit()
                             st.rerun()
                 with c2:
                     if status_atual == 'Pendente':
-                        if st.button("❌ Faltou", key=f"faltou_{r['id']}", help="Marcar que o funcionário faltou", use_container_width=True):
+                        if st.button("❌ Faltou", key=f"faltou_{r['id']}", help="Faltou", use_container_width=True):
                             with conn.session as s:
                                 s.execute(text("UPDATE agendamentos SET status='Faltou' WHERE id=:id"), {"id":r["id"]})
                                 s.commit()
                             st.rerun()
                 with c3:
-                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento do sistema", use_container_width=True):
+                    if st.button("✏️ Editar", key=f"edit_{r['id']}", help="Editar Dados", use_container_width=True):
+                        st.session_state.edit_id = r['id']
+                        st.rerun()
+                with c4:
+                    if st.button("🗑️ Del", key=f"del_{r['id']}", help="Remover", use_container_width=True):
                         with conn.session as s:
                             s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
                             s.commit()
                         st.rerun()
+
+    # Distribuindo nas colunas
+    with col_m:
+        st.markdown("#### 🌅 Período da Manhã")
+        lista_m = df_dia[df_dia['turno'] == "Manhã"] if not df_dia.empty else pd.DataFrame()
+        if lista_m.empty: st.info("Nenhum paciente agendado.")
+        else:
+            for _, r in lista_m.iterrows(): exibir_cartao_paciente(r, col_m)
 
     with col_t:
         st.markdown("#### ☀️ Período da Tarde")
         lista_t = df_dia[df_dia['turno'] == "Tarde"] if not df_dia.empty else pd.DataFrame()
-        if lista_t.empty: 
-            st.info("Nenhum paciente agendado.")
+        if lista_t.empty: st.info("Nenhum paciente agendado.")
         else:
-            for _, r in lista_t.iterrows():
-                status_atual = r.get('status', 'Pendente')
-                
-                # Definição de Cores com base no Status
-                if status_atual == 'Presente':
-                    cor_borda = "#2E7D32"  # Verde
-                elif status_atual == 'Faltou':
-                    cor_borda = "#C62828"  # Vermelho
-                else:
-                    cor_borda = "#FF9800"  # Laranja (Pendente)
-                
-                st.markdown(f"""
-                <div class="paciente-card" style="border-left: 5px solid {cor_borda};">
-                    <b>👤 {r['paciente']}</b> | 🏢 {r['empresa']}<br>
-                    <span style="font-size: 0.9em;"><b>📝 OBS:</b> {r['observacao'] if r['observacao'] else '-'}</span><br>
-                    <span style="font-size: 0.8em; color: #666;">✍️ Por: {r['responsavel']} | 🕒 {r['registro']}</span><br>
-                    <span style="font-size: 0.85em; font-weight: bold; color: {cor_borda};">Status: {status_atual.upper()}</span>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    if status_atual == 'Pendente':
-                        if st.button("✅ Presente", key=f"conf_{r['id']}", help="Confirmar Presença", use_container_width=True):
-                            with conn.session as s:
-                                s.execute(text("UPDATE agendamentos SET status='Presente' WHERE id=:id"), {"id":r["id"]})
-                                s.commit()
-                            st.rerun()
-                    else:
-                        if st.button("🔄 Voltar", key=f"undo_{r['id']}", help="Voltar para Pendente", use_container_width=True):
-                            with conn.session as s:
-                                s.execute(text("UPDATE agendamentos SET status='Pendente' WHERE id=:id"), {"id":r["id"]})
-                                s.commit()
-                            st.rerun()
-                with c2:
-                    if status_atual == 'Pendente':
-                        if st.button("❌ Faltou", key=f"faltou_{r['id']}", help="Marcar que o funcionário faltou", use_container_width=True):
-                            with conn.session as s:
-                                s.execute(text("UPDATE agendamentos SET status='Faltou' WHERE id=:id"), {"id":r["id"]})
-                                s.commit()
-                            st.rerun()
-                with c3:
-                    if st.button("🗑️ Remover", key=f"del_{r['id']}", help="Remover agendamento do sistema", use_container_width=True):
-                        with conn.session as s:
-                            s.execute(text("DELETE FROM agendamentos WHERE id=:id"), {"id":r["id"]})
-                            s.commit()
-                        st.rerun()
+            for _, r in lista_t.iterrows(): exibir_cartao_paciente(r, col_t)
 
     # ==========================================
     # RELATÓRIO MENSAL (PLANILHA)
@@ -504,24 +500,7 @@ def main():
         col_down, col_print = st.columns([1, 1])
         with col_down:
             csv_data = df_mes_relatorio.to_csv(index=False, sep=';').encode('utf-8-sig')
-            st.download_button("📥 Baixar Planilha (Excel/CSV)", data=csv_data, file_name=f"Agendamentos_{titulo_mes.replace(' ', '_')}.csv", mime="text/csv", use_container_width=True)
-            
-        with col_print:
-            html_table = df_mes_relatorio.to_html(index=False).replace('\n', '')
-            js_print_code = f"""
-            <button onclick="printTable()" style="width: 100%; border: 1px solid #2E7D32; background: white; color: #2E7D32; padding: 5px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; font-family: sans-serif; transition: 0.3s;">
-                🖨️ IMPRIMIR PLANILHA
-            </button>
-            <script>
-            function printTable() {{
-                var printWin = window.open('', '', 'height=800,width=1000');
-                printWin.document.write('<html><head><title>Impressão - {titulo_mes}</title><style>body {{ font-family: sans-serif; }} table {{width:100%; border-collapse: collapse; margin-top: 20px;}} th, td {{border: 1px solid #444; padding: 10px; text-align: left;}} th {{background-color: #f2f2f2;}} h2 {{ color: #1B5E20; text-align: center; }}</style></head><body><h2>Agendamentos - {titulo_mes}</h2>{html_table}</body></html>');
-                printWin.document.close();
-                setTimeout(function() {{ printWin.print(); printWin.close(); }}, 300);
-            }}
-            </script>
-            """
-            components.html(js_print_code, height=50)
+            st.download_button("📥 Baixar Planilha", data=csv_data, file_name=f"Agendamentos_{titulo_mes.replace(' ', '_')}.csv", mime="text/csv", use_container_width=True)
 
 if __name__ == "__main__":
     main()

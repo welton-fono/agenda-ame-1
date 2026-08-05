@@ -150,7 +150,7 @@ st.markdown("""
 try:
     conn = st.connection("postgresql", type="sql")
 except Exception as e:
-    st.error("Erro crítico de conexão com o Supabase. Verifique os Secrets.")
+    st.error("Erro crítico de conexão com o Supabase. Verifique a aba 'Secrets' nas configurações e o arquivo 'requirements.txt'.")
     st.stop()
 
 def inicializar_banco():
@@ -170,7 +170,7 @@ def main():
     if 'data_sel' not in st.session_state: st.session_state.data_sel = date.today()
     if 'mes_ref' not in st.session_state: st.session_state.mes_ref = date.today().replace(day=1)
     if 'edit_id' not in st.session_state: st.session_state.edit_id = None
-    if 'sub_id' not in st.session_state: st.session_state.sub_id = None # Controle para Substituição
+    if 'sub_id' not in st.session_state: st.session_state.sub_id = None
 
     df_bloqueios = conn.query("SELECT data, motivo FROM datas_bloqueadas", ttl=0)
     dict_bloqueios = {row['data']: row['motivo'] for _, row in df_bloqueios.iterrows()}
@@ -411,7 +411,6 @@ def main():
                     c_salvar, c_cancelar = st.columns(2)
                     if c_salvar.form_submit_button("✅ Confirmar Troca"):
                         if novo_nome and nova_emp:
-                            # Adiciona nota automática sobre a troca na observação
                             obs_extra = f"[Substituiu: {r['paciente']}]"
                             obs_final = f"{nova_obs} {obs_extra}".strip() if nova_obs else obs_extra
 
@@ -463,7 +462,6 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 5 Colunas para encaixar os 5 botões de ação
                 c1, c2, c3, c4, c5 = st.columns(5)
                 with c1:
                     if status_atual == 'Pendente':
@@ -479,7 +477,6 @@ def main():
                                 s.commit()
                             st.rerun()
                 with c2:
-                    # Botão Faltou só aparece se ele estiver pendente
                     if status_atual == 'Pendente':
                         if st.button("❌ Falta", key=f"faltou_{r['id']}", help="Faltou", use_container_width=True):
                             with conn.session as s:
